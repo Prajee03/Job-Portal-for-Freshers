@@ -1,0 +1,6 @@
+{
+  "name": "LaunchGrad",
+  "description": "Early-career job discovery, 1-tap fast applications, interview prep toolkit, and application pipeline tracker for new graduates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
