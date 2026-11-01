@@ -17,6 +17,27 @@
   <body class="bg-background text-on-surface antialiased selection:bg-primary-fixed selection:text-on-primary-fixed">
     <div id="root"></div>
     <script type="module" src="./src/main.tsx"></script>
+    <script>
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          if (
+            window.__LAUNCHGRAD_MOUNTED__ ||
+            document.querySelector('script[src*="@vite/client"]')
+          ) {
+            return;
+          }
+          var css = document.createElement('link');
+          css.rel = 'stylesheet';
+          css.href = './public/static-bundle/app.css';
+          document.head.appendChild(css);
+
+          var js = document.createElement('script');
+          js.type = 'module';
+          js.src = './public/static-bundle/app.js';
+          document.body.appendChild(js);
+        }, 100);
+      });
+    </script>
   </body>
 </html>
 

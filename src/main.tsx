@@ -3,6 +3,14 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
+declare global {
+  interface Window {
+    __LAUNCHGRAD_MOUNTED__?: boolean;
+  }
+}
+
+window.__LAUNCHGRAD_MOUNTED__ = true;
+
 interface BoundaryState {
   hasError: boolean;
   message: string;
