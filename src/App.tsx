@@ -56,6 +56,16 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
+  const [hasBackendApi, setHasBackendApi] = useState(false);
+
+  const safeSaveLocal = useCallback((state: LaunchGradState) => {
+    try {
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore storage quota / private mode errors
+    }
+  }, []);
+
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -64,50 +74,62 @@ export default function App() {
     }, 2800);
   }, []);
 
-  // Load persisted full-stack state from Express server on mount
+  // Support ?role=<jobId> shared links on static hosts like GitHub Pages
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roleId = params.get('role');
+    if (roleId) {
+      const match = JOB_ROLES.find((j) => j.id === roleId);
+      if (match) setSelectedJob(match);
+    }
+  }, []);
+
+  // Load persisted state from Express server if present; seamlessly fall back to client-side localStorage on GitHub Pages
   useEffect(() => {
     let active = true;
-    fetch('/api/bootstrap')
-      .then((res) => (res.ok ? res.json() : null))
+    fetch('./api/bootstrap')
+      .then((res) => {
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) return null;
+        return res.json();
+      })
       .then((data) => {
         if (!active || !data) return;
+        setHasBackendApi(true);
         if (data.jobs) setJobs(data.jobs);
         if (data.cohorts) setCohorts(data.cohorts);
         if (data.flashcards) setFlashcards(data.flashcards);
         if (data.assessmentQuestions) setAssessmentQuestions(data.assessmentQuestions);
         if (data.state) {
           setAppState(data.state);
-          try {
-            localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(data.state));
-          } catch {
-            // ignore
-          }
+          safeSaveLocal(data.state);
         }
       })
       .catch(() => {
-        // Fallback to local state if offline
+        // Static hosting (e.g. GitHub Pages): run cleanly with seed data + localStorage
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [safeSaveLocal]);
 
-  const persistState = useCallback((updater: (prev: LaunchGradState) => LaunchGradState) => {
-    setAppState((prev) => {
-      const next = updater(prev);
-      try {
-        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      fetch('/api/state', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(next),
-      }).catch(() => {});
-      return next;
-    });
-  }, []);
+  const persistState = useCallback(
+    (updater: (prev: LaunchGradState) => LaunchGradState) => {
+      setAppState((prev) => {
+        const next = updater(prev);
+        safeSaveLocal(next);
+        if (hasBackendApi) {
+          fetch('./api/state', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(next),
+          }).catch(() => {});
+        }
+        return next;
+      });
+    },
+    [hasBackendApi, safeSaveLocal]
+  );
 
   const appliedJobIds = useMemo(
     () => new Set(appState.applications.map((a) => a.jobId)),
@@ -143,7 +165,8 @@ export default function App() {
 
   const handleShareJob = useCallback(
     (job: JobRole) => {
-      const shareUrl = `${window.location.origin}/?role=${job.id}`;
+      const baseUrl = window.location.href.split('?')[0];
+      const shareUrl = `${baseUrl}?role=${job.id}`;
       if (navigator.share) {
         navigator
           .share({
@@ -170,23 +193,26 @@ export default function App() {
       phone: string;
     }) => {
       const job = jobs.find((j) => j.id === payload.jobId);
-      try {
-        const res = await fetch('/api/applications', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.state) {
-            setAppState(data.state);
-            localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(data.state));
-            showToast(`Application delivered to ${job?.company || 'Recruiting'}!`);
-            return;
+      if (hasBackendApi) {
+        try {
+          const res = await fetch('./api/applications', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const contentType = res.headers.get('content-type') || '';
+          if (res.ok && contentType.includes('application/json')) {
+            const data = await res.json();
+            if (data.state) {
+              setAppState(data.state);
+              safeSaveLocal(data.state);
+              showToast(`Application delivered to ${job?.company || 'Recruiting'}!`);
+              return;
+            }
           }
+        } catch {
+          // Fall through to local persistence
         }
-      } catch {
-        // Offline local fallback
       }
 
       const todayLabel = new Date().toLocaleDateString('en-US', {
@@ -217,10 +243,22 @@ export default function App() {
           },
           ...prev.applications,
         ],
+        notifications: [
+          {
+            id: `notif-${Date.now()}`,
+            title: `Application Sent to ${job?.company || 'Recruiting'}`,
+            body: `Your 1-tap packet for ${job?.title || 'this role'} is in priority fresher review (5-day SLA).`,
+            timeAgo: 'Just now',
+            read: false,
+            targetTab: 'tracker',
+            targetJobId: payload.jobId,
+          },
+          ...prev.notifications,
+        ],
       }));
       showToast(`Application delivered to ${job?.company || 'Recruiting'}!`);
     },
-    [jobs, persistState, showToast]
+    [hasBackendApi, jobs, persistState, safeSaveLocal, showToast]
   );
 
   const handleQuickAddSkill = useCallback(
